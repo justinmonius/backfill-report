@@ -121,7 +121,7 @@ elif st.session_state.page == "pmr":
 
             if c_staging == 0 and c_gi == 0:
                 return "Not Pulled"
-            elif (c_staging > 0 or c_gi > 0) and ns_staging == 0 and ns_gi == 0 and nr_staging > 0:
+            elif (c_staging > 0 or c_gi > 0) and ns_staging == 0 and ns_gi == 0:
                 return "Completed"
             elif (c_staging > 0 or c_gi > 0) and (ns_staging > 0 or ns_gi > 0):
                 return "Partially Completed"
@@ -140,7 +140,7 @@ elif st.session_state.page == "pmr":
         # ✅ Write to Excel
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            pmr_df.to_excel(writer, index=False, sheet_name="Original PMR")
+            pmr_df.to_excel(writer, index=False, sheet_name="MASTER")
             pivot1.to_excel(writer, index=False, sheet_name="Pivot Summary")
             workbook = writer.book
             sheet = writer.sheets["Pivot Summary"]
