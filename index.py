@@ -12,6 +12,7 @@ if "page" not in st.session_state:
     st.session_state.page = "zqm"
 
 # ----------------- PAGE 1: Upload ZQM -----------------
+zqm_raw_df = None
 if st.session_state.page == "zqm":
     st.header("Step 1: Upload and Filter ZQM Job File")
     zqm_file = st.file_uploader("📁 Upload ZQM Job File", type=["xlsx"], key="zqm")
@@ -19,6 +20,10 @@ if st.session_state.page == "zqm":
     if zqm_file:
         df = pd.read_excel(zqm_file)
         df.columns = df.columns.str.strip()
+        zqm_raw_df = df.copy()
+
+        # Store ZQM file for reuse
+        st.session_state.zqm_df = df
 
         # Apply filters
         filtered_df = df[
@@ -55,6 +60,27 @@ elif st.session_state.page == "pmr":
 
     if pmr_file:
         pmr_df = pd.read_excel(pmr_file)
+
+        # Drop specified columns
+        columns_to_drop = [
+            "Blocked (Overall)", "Stock Type", "Unit of Measure", "Document Number",
+            "Operation or Activity", "Stor. Bin of Goods Mvt Posting", "Party Entitled to Dispose",
+            "Production Supply Area", "Reservation Number", "Staging Method", "Requirement Start Date"
+        ]
+        pmr_df = pmr_df.drop(columns=[col for col in columns_to_drop if col in pmr_df.columns])
+
+        # Add ZQM basic start/finish dates
+        if "zqm_df" in st.session_state:
+            zqm_df = st.session_state.zqm_df.copy()
+            zqm_df.columns = zqm_df.columns.str.strip().str.lower()
+            order_col = next((col for col in zqm_df.columns if "order" in col), None)
+            start_col = next((col for col in zqm_df.columns if "start" in col), None)
+            finish_col = next((col for col in zqm_df.columns if "finish" in col), None)
+            if order_col and start_col and finish_col:
+                zqm_subset = zqm_df[[order_col, start_col, finish_col]].drop_duplicates()
+                zqm_subset.columns = ["Manufacturing Order", "Basic start date", "Basic finish date"]
+                pmr_df = pmr_df.merge(zqm_subset, on="Manufacturing Order", how="left")
+
         st.success("✅ PMR file uploaded successfully!")
         st.dataframe(pmr_df)
 
@@ -67,7 +93,6 @@ elif st.session_state.page == "pmr":
             aggfunc="count",
             fill_value=0
         )
-        pivot1["Grand Total"] = pivot1.sum(axis=1)
         pivot1.columns.name = None
         pivot1.reset_index(inplace=True)
 
@@ -80,24 +105,39 @@ elif st.session_state.page == "pmr":
             aggfunc="count",
             fill_value=0
         )
-        pivot2["Grand Total"] = pivot2.sum(axis=1)
         pivot2.columns.name = None
         pivot2.reset_index(inplace=True)
 
-        # ✅ Filter pivot tables to include only rows with non-zero 'Completed' and 'Not Started'
-        def has_both_statuses(df, cols):
-            lower_cols = [c.lower() for c in cols]
-            completed_col = next((c for c in df.columns if c.lower() == "completed"), None)
-            not_started_col = next((c for c in df.columns if c.lower() == "not started"), None)
-            if completed_col and not_started_col:
-                return df[(df[completed_col] > 0) & (df[not_started_col] > 0)]
+        # ✅ Identify status of each Manufacturing Order
+        combined_df = pd.merge(pivot1, pivot2, on="Manufacturing Order", how="outer", suffixes=('_Staging', '_GI'))
+        combined_df = combined_df.fillna(0)
+
+        def determine_status(row):
+            c_staging = row.get("Completed_Staging", 0)
+            ns_staging = row.get("Not Started_Staging", 0)
+            nr_staging = row.get("Not Relevant_Staging", 0)
+            c_gi = row.get("Completed_GI", 0)
+            ns_gi = row.get("Not Started_GI", 0)
+
+            if c_staging == 0 and c_gi == 0:
+                return "Not Pulled"
+            elif (c_staging > 0 or c_gi > 0) and ns_staging == 0 and ns_gi == 0 and nr_staging > 0:
+                return "Completed"
+            elif (c_staging > 0 or c_gi > 0) and (ns_staging > 0 or ns_gi > 0):
+                return "Partially Completed"
             else:
-                return df.head(0)  # return empty DataFrame if columns don't exist
+                return "Unknown"
 
-        pivot1 = has_both_statuses(pivot1, pivot1.columns)
-        pivot2 = has_both_statuses(pivot2, pivot2.columns)
+        status_map = combined_df.set_index("Manufacturing Order").apply(determine_status, axis=1).to_dict()
 
-        # ✅ Write both sheets to Excel, with separate pivot tables on same sheet
+        # ✅ Insert new 'Hit' column based on status
+        pmr_df.insert(
+            0,
+            "Hit",
+            pmr_df["Manufacturing Order"].apply(lambda x: status_map.get(x, None))
+        )
+
+        # ✅ Write to Excel
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             pmr_df.to_excel(writer, index=False, sheet_name="Original PMR")
@@ -105,12 +145,14 @@ elif st.session_state.page == "pmr":
             workbook = writer.book
             sheet = writer.sheets["Pivot Summary"]
 
-            # Find the next empty column to place second pivot (leave a few columns of space)
+            # Place pivot2 to the right of pivot1
             start_col = pivot1.shape[1] + 3
-
             for r_idx, row in enumerate(dataframe_to_rows(pivot2, index=False, header=True), 1):
                 for c_idx, value in enumerate(row, start_col):
                     sheet.cell(row=r_idx, column=c_idx, value=value)
+
+            # Write combined analysis to new sheet
+            combined_df.to_excel(writer, index=False, sheet_name="Combined Pivot")
 
         output.seek(0)
 
