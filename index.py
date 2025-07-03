@@ -111,7 +111,7 @@ elif st.session_state.page == "pmr":
         pmr_df["9191"] = pmr_df["Product"].map(product_sums["MR9191"] if "MR9191" in product_sums else 0).fillna(0)
         pmr_df["9192"] = pmr_df["Product"].map(product_sums["MR9192"] if "MR9192" in product_sums else 0).fillna(0)
 
-        # ✅ Create first pivot table
+        # Create pivot tables
         pivot1 = pd.pivot_table(
             pmr_df,
             index="Manufacturing Order",
@@ -123,7 +123,6 @@ elif st.session_state.page == "pmr":
         pivot1.columns.name = None
         pivot1.reset_index(inplace=True)
 
-        # ✅ Create second pivot table
         pivot2 = pd.pivot_table(
             pmr_df,
             index="Manufacturing Order",
@@ -135,9 +134,7 @@ elif st.session_state.page == "pmr":
         pivot2.columns.name = None
         pivot2.reset_index(inplace=True)
 
-        # ✅ Identify status of each Manufacturing Order
-        combined_df = pd.merge(pivot1, pivot2, on="Manufacturing Order", how="outer", suffixes=('_Staging', '_GI'))
-        combined_df = combined_df.fillna(0)
+        combined_df = pd.merge(pivot1, pivot2, on="Manufacturing Order", how="outer", suffixes=('_Staging', '_GI')).fillna(0)
 
         def determine_status(row):
             c_staging = row.get("Completed_Staging", 0)
@@ -156,19 +153,13 @@ elif st.session_state.page == "pmr":
                 return "Unknown"
 
         status_map = combined_df.set_index("Manufacturing Order").apply(determine_status, axis=1).to_dict()
-
-        # ✅ Insert new 'Hit' column based on status
-        pmr_df.insert(
-            0,
-            "Hit",
-            pmr_df["Manufacturing Order"].apply(lambda x: status_map.get(x, None))
-        )
+        pmr_df.insert(0, "Hit", pmr_df["Manufacturing Order"].apply(lambda x: status_map.get(x, None)))
 
         st.success("✅ PMR and SOH files uploaded and processed successfully!")
         st.dataframe(pmr_df)
         st.dataframe(soh_df_filtered)
 
-        # Save all to Excel
+        # Save to Excel with green MASTER tab
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             pmr_df.to_excel(writer, index=False, sheet_name="MASTER")
@@ -176,6 +167,9 @@ elif st.session_state.page == "pmr":
             soh_pivot.to_excel(writer, index=False, sheet_name="SOH Pivot")
             pivot1.to_excel(writer, index=False, sheet_name="Pivot Summary")
             combined_df.to_excel(writer, index=False, sheet_name="Combined Pivot")
+
+            # Highlight the MASTER tab green
+            writer.book["MASTER"].sheet_properties.tabColor = "00FF00"
 
         output.seek(0)
 
