@@ -48,20 +48,22 @@ if st.session_state.page == "zqm":
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-        if st.button("➡️ Proceed to Upload PMR File"):
+        if st.button("➡️ Proceed to Upload PMR + SOH File"):
             st.session_state.page = "pmr"
             st.rerun()
 
-# ----------------- PAGE 2: Upload PMR -----------------
+# ----------------- PAGE 2: Upload PMR + SOH -----------------
 elif st.session_state.page == "pmr":
-    st.header("Step 2: Upload PMR File")
+    st.header("Step 2: Upload PMR and SOH Files")
 
     pmr_file = st.file_uploader("📁 Upload PMR File", type=["xlsx"], key="pmr")
+    soh_file = st.file_uploader("📁 Upload SOH File", type=["xlsx"], key="soh")
 
-    if pmr_file:
+    if pmr_file and soh_file:
         pmr_df = pd.read_excel(pmr_file)
+        soh_df = pd.read_excel(soh_file)
 
-        # Drop specified columns
+        # Drop specified columns from PMR
         columns_to_drop = [
             "Blocked (Overall)", "Stock Type", "Unit of Measure", "Document Number",
             "Operation or Activity", "Stor. Bin of Goods Mvt Posting", "Party Entitled to Dispose",
@@ -81,8 +83,33 @@ elif st.session_state.page == "pmr":
                 zqm_subset.columns = ["Manufacturing Order", "Basic start date", "Basic finish date"]
                 pmr_df = pmr_df.merge(zqm_subset, on="Manufacturing Order", how="left")
 
-        st.success("✅ PMR file uploaded successfully!")
-        st.dataframe(pmr_df)
+        # Filter SOH file
+        soh_df.columns = soh_df.columns.str.strip()
+        valid_stock_types = ["F1", "F2", "F3", "F4", "Q3", "Q4"]
+        valid_storage_types = [
+            "900", "900K", "905", "909", "910", "912", "914", "919", "920",
+            "927", "934", "940", "986", "987", "990", "990P", "991", "FGI",
+            "GRB1", "PRO", "PTWY", "RI", "RMA"
+        ]
+        soh_df_filtered = soh_df[
+            soh_df["Stock Type"].isin(valid_stock_types) &
+            soh_df["Storage Type"].astype(str).isin(valid_storage_types)
+        ]
+
+        # Create SOH pivot table
+        soh_pivot = pd.pivot_table(
+            soh_df_filtered,
+            index="Product",
+            columns="Owner",
+            values="Quantity",
+            aggfunc="sum",
+            fill_value=0
+        ).reset_index()
+
+        # Lookup to add 9191 and 9192 values to PMR
+        product_sums = soh_pivot.set_index("Product")[[col for col in soh_pivot.columns if col in ["MR9191", "MR9192"]]]
+        pmr_df["9191"] = pmr_df["Product"].map(product_sums["MR9191"] if "MR9191" in product_sums else 0).fillna(0)
+        pmr_df["9192"] = pmr_df["Product"].map(product_sums["MR9192"] if "MR9192" in product_sums else 0).fillna(0)
 
         # ✅ Create first pivot table
         pivot1 = pd.pivot_table(
@@ -137,48 +164,35 @@ elif st.session_state.page == "pmr":
             pmr_df["Manufacturing Order"].apply(lambda x: status_map.get(x, None))
         )
 
-        # ✅ Write to Excel
+        st.success("✅ PMR and SOH files uploaded and processed successfully!")
+        st.dataframe(pmr_df)
+        st.dataframe(soh_df_filtered)
+
+        # Save all to Excel
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             pmr_df.to_excel(writer, index=False, sheet_name="MASTER")
+            soh_df_filtered.to_excel(writer, index=False, sheet_name="SOH Raw")
+            soh_pivot.to_excel(writer, index=False, sheet_name="SOH Pivot")
             pivot1.to_excel(writer, index=False, sheet_name="Pivot Summary")
-            workbook = writer.book
-            sheet = writer.sheets["Pivot Summary"]
-
-            # Place pivot2 to the right of pivot1
-            start_col = pivot1.shape[1] + 3
-            for r_idx, row in enumerate(dataframe_to_rows(pivot2, index=False, header=True), 1):
-                for c_idx, value in enumerate(row, start_col):
-                    sheet.cell(row=r_idx, column=c_idx, value=value)
-
-            # Write combined analysis to new sheet
             combined_df.to_excel(writer, index=False, sheet_name="Combined Pivot")
 
         output.seek(0)
 
         st.download_button(
-            label="📥 Download PMR Output with Pivot",
+            label="📥 Download Updated PMR File",
             data=output,
-            file_name="processed_pmr_with_pivot.xlsx",
+            file_name="updated_pmr_with_soh.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-        if st.button("➡️ Proceed to Upload SOH File"):
-            st.session_state.page = "soh"
+        if st.button("➡️ Proceed to Next Step"):
+            st.session_state.page = "soh_done"
             st.rerun()
 
-# ----------------- PAGE 3: Upload SOH -----------------
-elif st.session_state.page == "soh":
-    st.header("Step 3: Upload SOH File")
-
-    soh_file = st.file_uploader("📁 Upload SOH File", type=["xlsx"], key="soh")
-
-    if soh_file:
-        soh_df = pd.read_excel(soh_file)
-        st.success("✅ SOH file uploaded successfully!")
-        st.dataframe(soh_df)
-
-        # Further merging/logic would go here
+# ----------------- PAGE 3: Done -----------------
+elif st.session_state.page == "soh_done":
+    st.header("🎉 Processing complete or continue logic here")
 
     if st.button("🔁 Restart Entire Process"):
         st.session_state.page = "zqm"
