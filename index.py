@@ -196,7 +196,11 @@ elif st.session_state.page == "soh":
             pmr_df.to_excel(writer, index=False, sheet_name="MASTER")
             soh_df_filtered.to_excel(writer, index=False, sheet_name="SOH Raw")
             soh_pivot.to_excel(writer, index=False, sheet_name="SOH Pivot")
-            pivot1.to_excel(writer, index=False, sheet_name="Pivot Summary")
+
+            # Write side-by-side pivot tables to Pivot Summary
+            pivot1.to_excel(writer, startrow=0, startcol=0, index=False, sheet_name="Pivot Summary")
+            pivot2.to_excel(writer, startrow=0, startcol=len(pivot1.columns) + 2, index=False, sheet_name="Pivot Summary")
+
             combined_df.to_excel(writer, index=False, sheet_name="Combined Pivot")
             writer.book["MASTER"].sheet_properties.tabColor = "00FF00"
         output.seek(0)
