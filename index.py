@@ -95,7 +95,7 @@ elif st.session_state.page == "pmr":
         pmr_output.seek(0)
 
         st.download_button(
-            label="📥 Download Cleaned PMR File",
+            label="📥 Download Cleaned PMR File (copy parts to get SOH)",
             data=pmr_output,
             file_name="cleaned_pmr.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
