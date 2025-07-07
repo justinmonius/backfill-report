@@ -48,20 +48,18 @@ if st.session_state.page == "zqm":
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-        if st.button("➡️ Proceed to Upload PMR + SOH File"):
+        if st.button("➡️ Proceed to Upload PMR File"):
             st.session_state.page = "pmr"
             st.rerun()
 
-# ----------------- PAGE 2: Upload PMR + SOH -----------------
+# ----------------- PAGE 2: Upload PMR -----------------
 elif st.session_state.page == "pmr":
-    st.header("Step 2: Upload PMR and SOH Files")
+    st.header("Step 2: Upload PMR File")
 
     pmr_file = st.file_uploader("📁 Upload PMR File", type=["xlsx"], key="pmr")
-    soh_file = st.file_uploader("📁 Upload SOH File", type=["xlsx"], key="soh")
 
-    if pmr_file and soh_file:
+    if pmr_file:
         pmr_df = pd.read_excel(pmr_file)
-        soh_df = pd.read_excel(soh_file)
 
         # Drop specified columns from PMR
         columns_to_drop = [
@@ -79,9 +77,43 @@ elif st.session_state.page == "pmr":
             start_col = next((col for col in zqm_df.columns if "start" in col), None)
             finish_col = next((col for col in zqm_df.columns if "finish" in col), None)
             if order_col and start_col and finish_col:
+                zqm_df[start_col] = pd.to_datetime(zqm_df[start_col]).dt.strftime("%m/%d/%Y")
+                zqm_df[finish_col] = pd.to_datetime(zqm_df[finish_col]).dt.strftime("%m/%d/%Y")
                 zqm_subset = zqm_df[[order_col, start_col, finish_col]].drop_duplicates()
                 zqm_subset.columns = ["Manufacturing Order", "Basic start date", "Basic finish date"]
                 pmr_df = pmr_df.merge(zqm_subset, on="Manufacturing Order", how="left")
+
+        st.session_state.pmr_df = pmr_df
+
+        st.success("✅ PMR file uploaded successfully! Now upload SOH file.")
+        st.dataframe(pmr_df)
+
+        # Allow user to download raw cleaned PMR file
+        pmr_output = BytesIO()
+        with pd.ExcelWriter(pmr_output, engine='openpyxl') as writer:
+            pmr_df.to_excel(writer, index=False, sheet_name="PMR_Cleaned")
+        pmr_output.seek(0)
+
+        st.download_button(
+            label="📥 Download Cleaned PMR File",
+            data=pmr_output,
+            file_name="cleaned_pmr.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+        if st.button("➡️ Proceed to Upload SOH File"):
+            st.session_state.page = "soh"
+            st.rerun()
+
+# ----------------- PAGE 3: Upload SOH and Merge -----------------
+elif st.session_state.page == "soh":
+    st.header("Step 3: Upload SOH File")
+
+    soh_file = st.file_uploader("📁 Upload SOH File", type=["xlsx"], key="soh")
+
+    if soh_file and "pmr_df" in st.session_state:
+        pmr_df = st.session_state.pmr_df.copy()
+        soh_df = pd.read_excel(soh_file)
 
         # Filter SOH file
         soh_df.columns = soh_df.columns.str.strip()
@@ -155,11 +187,10 @@ elif st.session_state.page == "pmr":
         status_map = combined_df.set_index("Manufacturing Order").apply(determine_status, axis=1).to_dict()
         pmr_df.insert(0, "Hit", pmr_df["Manufacturing Order"].apply(lambda x: status_map.get(x, None)))
 
-        st.success("✅ PMR and SOH files uploaded and processed successfully!")
+        st.success("✅ SOH processed and merged with PMR successfully!")
         st.dataframe(pmr_df)
-        st.dataframe(soh_df_filtered)
 
-        # Save to Excel with green MASTER tab
+        # Save to Excel
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             pmr_df.to_excel(writer, index=False, sheet_name="MASTER")
@@ -167,10 +198,7 @@ elif st.session_state.page == "pmr":
             soh_pivot.to_excel(writer, index=False, sheet_name="SOH Pivot")
             pivot1.to_excel(writer, index=False, sheet_name="Pivot Summary")
             combined_df.to_excel(writer, index=False, sheet_name="Combined Pivot")
-
-            # Highlight the MASTER tab green
             writer.book["MASTER"].sheet_properties.tabColor = "00FF00"
-
         output.seek(0)
 
         st.download_button(
@@ -180,14 +208,6 @@ elif st.session_state.page == "pmr":
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-        if st.button("➡️ Proceed to Next Step"):
-            st.session_state.page = "soh_done"
+        if st.button("🔁 Restart Entire Process"):
+            st.session_state.page = "zqm"
             st.rerun()
-
-# ----------------- PAGE 3: Done -----------------
-elif st.session_state.page == "soh_done":
-    st.header("🎉 Processing complete or continue logic here")
-
-    if st.button("🔁 Restart Entire Process"):
-        st.session_state.page = "zqm"
-        st.rerun()
