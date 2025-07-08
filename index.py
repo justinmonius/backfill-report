@@ -42,24 +42,27 @@ if st.session_state.page == "zqm":
         output.seek(0)
 
         st.download_button(
-            label="📥 Download Filtered ZQM as Excel (paste into /n/scwm/mon)",
+            label="📅 Download Filtered ZQM as Excel (paste into /n/scwm/mon)",
             data=output,
             file_name="filtered_zqm.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-        if st.button("➡️ Proceed to Upload PMR File"):
-            st.session_state.page = "pmr"
+        if st.button("➡️ Proceed to Upload PMR & SOH Files"):
+            st.session_state.page = "pmr_soh"
             st.rerun()
 
-# ----------------- PAGE 2: Upload PMR -----------------
-elif st.session_state.page == "pmr":
-    st.header("Step 2: Upload PMR File")
+# ----------------- PAGE 2: Upload PMR and SOH -----------------
+elif st.session_state.page == "pmr_soh":
+    st.header("Step 2: Upload PMR and SOH Files")
+    st.markdown(":arrow_forward: **Instructions:** First, get a PMR export from SAP. Then, get the SOH file containing stock data for all part numbers in the PMR.")
 
     pmr_file = st.file_uploader("📁 Upload PMR File", type=["xlsx"], key="pmr")
+    soh_file = st.file_uploader("📁 Upload SOH File", type=["xlsx"], key="soh")
 
-    if pmr_file:
+    if pmr_file and soh_file:
         pmr_df = pd.read_excel(pmr_file)
+        soh_df = pd.read_excel(soh_file)
 
         # Drop specified columns from PMR
         columns_to_drop = [
@@ -81,41 +84,11 @@ elif st.session_state.page == "pmr":
                 zqm_df[finish_col] = pd.to_datetime(zqm_df[finish_col]).dt.strftime("%m/%d/%Y")
                 zqm_subset = zqm_df[[order_col, start_col, finish_col]].drop_duplicates()
                 zqm_subset.columns = ["Manufacturing Order", "Basic start date", "Basic finish date"]
-                pmr_df = pmr_df.merge(zqm_subset, on="Manufacturing Order", how="left")
 
-        st.session_state.pmr_df = pmr_df
+                pmr_order_col = next((col for col in pmr_df.columns if "order" in col.lower()), "Manufacturing Order")
+                zqm_subset.columns = [pmr_order_col, "Basic start date", "Basic finish date"]
+                pmr_df = pmr_df.merge(zqm_subset, on=pmr_order_col, how="left")
 
-        st.success("✅ PMR file uploaded successfully! Now upload SOH file.")
-        st.dataframe(pmr_df)
-
-        # Allow user to download raw cleaned PMR file
-        pmr_output = BytesIO()
-        with pd.ExcelWriter(pmr_output, engine='openpyxl') as writer:
-            pmr_df.to_excel(writer, index=False, sheet_name="PMR_Cleaned")
-        pmr_output.seek(0)
-
-        st.download_button(
-            label="📥 Download Cleaned PMR File (copy parts to get SOH)",
-            data=pmr_output,
-            file_name="cleaned_pmr.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
-        if st.button("➡️ Proceed to Upload SOH File"):
-            st.session_state.page = "soh"
-            st.rerun()
-
-# ----------------- PAGE 3: Upload SOH and Merge -----------------
-elif st.session_state.page == "soh":
-    st.header("Step 3: Upload SOH File")
-
-    soh_file = st.file_uploader("📁 Upload SOH File", type=["xlsx"], key="soh")
-
-    if soh_file and "pmr_df" in st.session_state:
-        pmr_df = st.session_state.pmr_df.copy()
-        soh_df = pd.read_excel(soh_file)
-
-        # Filter SOH file
         soh_df.columns = soh_df.columns.str.strip()
         valid_stock_types = ["F1", "F2", "F3", "F4", "Q3", "Q4"]
         valid_storage_types = [
@@ -128,7 +101,6 @@ elif st.session_state.page == "soh":
             soh_df["Storage Type"].astype(str).isin(valid_storage_types)
         ]
 
-        # Create SOH pivot table
         soh_pivot = pd.pivot_table(
             soh_df_filtered,
             index="Product",
@@ -138,75 +110,85 @@ elif st.session_state.page == "soh":
             fill_value=0
         ).reset_index()
 
-        # Lookup to add 9191 and 9192 values to PMR
-        product_sums = soh_pivot.set_index("Product")[[col for col in soh_pivot.columns if col in ["MR9191", "MR9192"]]]
-        pmr_df["9191"] = pmr_df["Product"].map(product_sums["MR9191"] if "MR9191" in product_sums else 0).fillna(0)
-        pmr_df["9192"] = pmr_df["Product"].map(product_sums["MR9192"] if "MR9192" in product_sums else 0).fillna(0)
+        # Detect product column in PMR
+        product_column = None
+        if "Product" in pmr_df.columns:
+            product_column = "Product"
+        elif "Finished Product or Order Text" in pmr_df.columns:
+            product_column = "Finished Product or Order Text"
 
-        # Create pivot tables
+        if product_column:
+            product_sums = soh_pivot.set_index("Product")[[col for col in soh_pivot.columns if col in ["MR9191", "MR9192"]]]
+            pmr_df["9191"] = pmr_df[product_column].map(product_sums["MR9191"] if "MR9191" in product_sums else 0).fillna(0)
+            pmr_df["9192"] = pmr_df[product_column].map(product_sums["MR9192"] if "MR9192" in product_sums else 0).fillna(0)
+
+        # Generate pivot tables
         pivot1 = pd.pivot_table(
             pmr_df,
             index="Manufacturing Order",
             columns="Staging Status",
-            values="Product",
+            values=product_column,
             aggfunc="count",
             fill_value=0
-        )
-        pivot1.columns.name = None
-        pivot1.reset_index(inplace=True)
-
+        ).reset_index()
         pivot2 = pd.pivot_table(
             pmr_df,
             index="Manufacturing Order",
             columns="Goods Issue Status",
-            values="Product",
+            values=product_column,
             aggfunc="count",
             fill_value=0
-        )
-        pivot2.columns.name = None
-        pivot2.reset_index(inplace=True)
+        ).reset_index()
 
         combined_df = pd.merge(pivot1, pivot2, on="Manufacturing Order", how="outer", suffixes=('_Staging', '_GI')).fillna(0)
 
-        def determine_status(row):
-            c_staging = row.get("Completed_Staging", 0)
-            ns_staging = row.get("Not Started_Staging", 0)
-            nr_staging = row.get("Not Relevant_Staging", 0)
-            c_gi = row.get("Completed_GI", 0)
-            ns_gi = row.get("Not Started_GI", 0)
+        def classify_hit(row):
+            staging_cols = [col for col in row.index if '_Staging' in col]
+            gi_cols = [col for col in row.index if '_GI' in col]
 
-            if c_staging == 0 and c_gi == 0:
-                return "Not Pulled"
-            elif (c_staging > 0 or c_gi > 0) and ns_staging == 0 and ns_gi == 0:
+            any_partial = any("Partially Completed" in col and row[col] > 0 for col in row.index)
+            if any_partial:
+                return "Pulled"
+
+            only_completed_or_not_relevant = all(
+                ("Completed" in col or "Not Relevant" in col) and row[col] > 0 or row[col] == 0
+                for col in staging_cols + gi_cols
+            ) and (row.get('Completed_Staging', 0) > 0 or row.get('Not Relevant_Staging', 0) > 0) and (row.get('Completed_GI', 0) > 0 or row.get('Not Relevant_GI', 0) > 0)
+
+            only_not_started = all(
+                row.get(col, 0) == 0 for col in staging_cols + gi_cols
+                if not col.endswith('Not Started_Staging') and not col.endswith('Not Started_GI')
+            ) and (row.get('Not Started_Staging', 0) > 0 or row.get('Not Started_GI', 0) > 0)
+
+            if only_completed_or_not_relevant:
                 return "Completed"
-            elif (c_staging > 0 or c_gi > 0) and (ns_staging > 0 or ns_gi > 0):
-                return "Partially Completed"
+            elif only_not_started:
+                return "Not Pulled"
             else:
-                return "Unknown"
+                return "Pulled"
 
-        status_map = combined_df.set_index("Manufacturing Order").apply(determine_status, axis=1).to_dict()
-        pmr_df.insert(0, "Hit", pmr_df["Manufacturing Order"].apply(lambda x: status_map.get(x, None)))
+        combined_df['Hit'] = combined_df.apply(classify_hit, axis=1)
+
+        pmr_df = pmr_df.merge(combined_df[['Manufacturing Order', 'Hit']], on="Manufacturing Order", how="left")
+        hit_col = pmr_df.pop("Hit")
+        pmr_df.insert(0, "Hit", hit_col)
 
         st.success("✅ SOH processed and merged with PMR successfully!")
         st.dataframe(pmr_df)
 
-        # Save to Excel
         output = BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             pmr_df.to_excel(writer, index=False, sheet_name="MASTER")
             soh_df_filtered.to_excel(writer, index=False, sheet_name="SOH Raw")
             soh_pivot.to_excel(writer, index=False, sheet_name="SOH Pivot")
-
-            # Write side-by-side pivot tables to Pivot Summary
             pivot1.to_excel(writer, startrow=0, startcol=0, index=False, sheet_name="Pivot Summary")
             pivot2.to_excel(writer, startrow=0, startcol=len(pivot1.columns) + 2, index=False, sheet_name="Pivot Summary")
-
             combined_df.to_excel(writer, index=False, sheet_name="Combined Pivot")
             writer.book["MASTER"].sheet_properties.tabColor = "00FF00"
         output.seek(0)
 
         st.download_button(
-            label="📥 Download Updated PMR File",
+            label="📅 Download Updated PMR File",
             data=output,
             file_name="updated_pmr_with_soh.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
