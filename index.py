@@ -16,7 +16,7 @@ if "page" not in st.session_state:
 zqm_raw_df = None
 if st.session_state.page == "zqm":
     st.header("Step 1: Upload and Filter ZQM Job File")
-    zqm_file = st.file_uploader("📁 Upload ZQM Job File", type=["xlsx"], key="zqm")
+    zqm_file = st.file_uploader("📁 Upload ZQM_Job File (retrieved from SAP Production Order Status Report). The purpose of this export is to capture all released production orders that are not in complete status. It is recommended to apply the prefix of your respective program as a parameter to lessen the queue time from the report.", type=["xlsx"], key="zqm")
 
     if zqm_file:
         df = pd.read_excel(zqm_file)
@@ -43,7 +43,7 @@ if st.session_state.page == "zqm":
         output.seek(0)
 
         st.download_button(
-            label="🗕️ Download Filtered ZQM as Excel (paste into /n/scwm/mon material request items)",
+            label="🗕️ Download Filtered ZQM as Excel (paste job order numbers into /n/scwm/mon material request items)",
             data=output,
             file_name="filtered_zqm.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -56,7 +56,7 @@ if st.session_state.page == "zqm":
 # ----------------- PAGE 2: Upload PMR and SOH -----------------
 elif st.session_state.page == "pmr_soh":
     st.header("Step 2: Upload PMR and SOH Files")
-    st.markdown(":arrow_forward: **Instructions:** First, get a PMR export from SAP. Then, get the SOH file containing stock data for all part numbers in the PMR.")
+    st.markdown(":arrow_forward: **Instructions:** First, get a PMR export from SAP (SCWM_MON). Then, get the SOH file containing stock data for all part numbers in the PMR. This is two different exports from SAP, one being pmr and the other SOH.")
 
     pmr_file = st.file_uploader("📁 Upload PMR File", type=["xlsx"], key="pmr")
     soh_file = st.file_uploader("📁 Upload SOH File", type=["xlsx"], key="soh")
