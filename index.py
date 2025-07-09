@@ -3,6 +3,7 @@ import pandas as pd
 from io import BytesIO
 from openpyxl import load_workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
+from openpyxl.styles import PatternFill
 
 st.set_page_config(page_title="Backfill Report Tool", layout="wide")
 st.title("📄 Backfill Report Generator")
@@ -42,7 +43,7 @@ if st.session_state.page == "zqm":
         output.seek(0)
 
         st.download_button(
-            label="📅 Download Filtered ZQM as Excel (paste into /n/scwm/mon)",
+            label="🗕️ Download Filtered ZQM as Excel (paste into /n/scwm/mon material request items)",
             data=output,
             file_name="filtered_zqm.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -72,21 +73,28 @@ elif st.session_state.page == "pmr_soh":
         ]
         pmr_df = pmr_df.drop(columns=[col for col in columns_to_drop if col in pmr_df.columns])
 
-        # Add ZQM basic start/finish dates
+        # Add ZQM basic start/finish dates and serial number
         if "zqm_df" in st.session_state:
             zqm_df = st.session_state.zqm_df.copy()
             zqm_df.columns = zqm_df.columns.str.strip().str.lower()
             order_col = next((col for col in zqm_df.columns if "order" in col), None)
             start_col = next((col for col in zqm_df.columns if "start" in col), None)
             finish_col = next((col for col in zqm_df.columns if "finish" in col), None)
+            serial_col = next((col for col in zqm_df.columns if "serial" in col), None)
             if order_col and start_col and finish_col:
                 zqm_df[start_col] = pd.to_datetime(zqm_df[start_col]).dt.strftime("%m/%d/%Y")
                 zqm_df[finish_col] = pd.to_datetime(zqm_df[finish_col]).dt.strftime("%m/%d/%Y")
-                zqm_subset = zqm_df[[order_col, start_col, finish_col]].drop_duplicates()
-                zqm_subset.columns = ["Manufacturing Order", "Basic start date", "Basic finish date"]
+                zqm_subset_cols = [order_col, start_col, finish_col]
+                if serial_col:
+                    zqm_subset_cols.append(serial_col)
+                zqm_subset = zqm_df[zqm_subset_cols].drop_duplicates()
+                new_col_names = ["Manufacturing Order", "Basic start date", "Basic finish date"]
+                if serial_col:
+                    new_col_names.append("Serial Number")
+                zqm_subset.columns = new_col_names
 
                 pmr_order_col = next((col for col in pmr_df.columns if "order" in col.lower()), "Manufacturing Order")
-                zqm_subset.columns = [pmr_order_col, "Basic start date", "Basic finish date"]
+                zqm_subset.columns = [pmr_order_col] + new_col_names[1:]
                 pmr_df = pmr_df.merge(zqm_subset, on=pmr_order_col, how="left")
 
         soh_df.columns = soh_df.columns.str.strip()
@@ -184,7 +192,41 @@ elif st.session_state.page == "pmr_soh":
             pivot1.to_excel(writer, startrow=0, startcol=0, index=False, sheet_name="Pivot Summary")
             pivot2.to_excel(writer, startrow=0, startcol=len(pivot1.columns) + 2, index=False, sheet_name="Pivot Summary")
             combined_df.to_excel(writer, index=False, sheet_name="Combined Pivot")
+
+            # Conditional formatting for Hit column
+            wb = writer.book
+            ws = wb["MASTER"]
+            green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+            red_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+            yellow_fill = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
+
+            for col in ws.iter_cols(min_row=1, max_row=1):
+                if col[0].value == "Hit":
+                    hit_col_letter = col[0].column_letter
+                if col[0].value == "9191":
+                    col_9191 = col[0].column_letter
+                if col[0].value == "9192":
+                    col_9192 = col[0].column_letter
+
+            for row in range(2, ws.max_row + 1):
+                hit_cell = ws[f"{hit_col_letter}{row}"]
+                soh_9191_cell = ws[f"{col_9191}{row}"]
+                soh_9192_cell = ws[f"{col_9192}{row}"]
+
+                if hit_cell.value == "Completed":
+                    hit_cell.fill = green_fill
+                elif hit_cell.value == "Pulled":
+                    hit_cell.fill = red_fill
+                elif hit_cell.value == "Not Pulled":
+                    hit_cell.fill = yellow_fill
+
+                if isinstance(soh_9191_cell.value, (int, float)) and soh_9191_cell.value > 0:
+                    soh_9191_cell.fill = green_fill
+                if isinstance(soh_9192_cell.value, (int, float)) and soh_9192_cell.value > 0:
+                    soh_9192_cell.fill = green_fill
+
             writer.book["MASTER"].sheet_properties.tabColor = "00FF00"
+
         output.seek(0)
 
         st.download_button(
