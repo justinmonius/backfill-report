@@ -20,7 +20,41 @@ if st.session_state.page == "zqm":
 
     if zqm_file:
         df = pd.read_excel(zqm_file)
-        df.columns = df.columns.str.strip()
+        df.columns = df.columns.str.strip().str.lower()
+        zqm_raw_df = df.copy()
+
+        # Store ZQM file for reuse
+        st.session_state.zqm_df = df
+
+        if "gr qty" not in df.columns or "status" not in df.columns:
+            st.error("❌ Missing required columns: 'GR Qty' or 'Status'. Please check the uploaded file.")
+        else:
+            filtered_df = df[
+                (df["gr qty"] == 0) &
+                (df["status"].str.contains("rel", case=False, na=False)) &
+                (~df["status"].str.contains("teco", case=False, na=False))
+            ]
+
+            st.success(f"✅ Filtered {len(filtered_df)} rows")
+            st.dataframe(filtered_df)
+
+            # Create downloadable Excel
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                filtered_df.to_excel(writer, index=False, sheet_name="Filtered")
+            output.seek(0)
+
+            st.download_button(
+                label="🗕️ Download Filtered ZQM as Excel (paste job order numbers into /n/scwm/mon material request items)",
+                data=output,
+                file_name="filtered_zqm.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
+            if st.button("➡️ Proceed to Upload PMR & SOH Files"):
+                st.session_state.page = "pmr_soh"
+                st.rerun()
+
         zqm_raw_df = df.copy()
 
         # Store ZQM file for reuse
